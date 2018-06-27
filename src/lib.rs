@@ -495,6 +495,7 @@ extern crate digest;
 extern crate failure;
 #[macro_use]
 extern crate failure_derive;
+extern crate integer_encoding;
 extern crate libflate;
 extern crate rand;
 #[macro_use]

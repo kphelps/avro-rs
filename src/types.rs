@@ -326,6 +326,7 @@ impl Value {
             (&Value::Bytes(_), &Schema::Bytes) => true,
             (&Value::String(_), &Schema::String) => true,
             (&Value::Fixed(n, _), &Schema::Fixed { size, .. }) => n == size,
+            (&Value::String(ref s), &Schema::Fixed { size, .. }) => s.len() == size,
             (&Value::String(ref s), &Schema::Enum { ref symbols, .. }) => symbols.contains(s),
             (&Value::Enum(i, ref s), &Schema::Enum { ref symbols, .. }) => symbols
                 .get(i as usize)
