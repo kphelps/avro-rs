@@ -290,6 +290,7 @@ mod tests {
     use std::io::Cursor;
     use crate::types::{Record, ToAvro};
     use crate::Reader;
+    use crate::schema::{SchemaKind, UnionRef};
 
     static SCHEMA: &'static str = r#"
             {
@@ -344,7 +345,67 @@ mod tests {
 
         assert_eq!(
             from_avro_datum(&schema, &mut encoded, None).unwrap(),
-            Value::Union(Box::new(Value::Long(0)))
+            Value::Union(UnionRef::primitive(SchemaKind::Long), Box::new(Value::Long(0)))
+        );
+    }
+
+    #[test]
+    fn test_record_union() {
+        let some_schema_string = r#"
+            {
+                "type": "record",
+                "name": "some_record",
+                "fields": [
+                    {"type": "long", "name": "a"}
+                ]
+            }
+        "#;
+        let other_schema_string = r#"
+            {
+                "type": "record",
+                "name": "other_record",
+                "fields": [
+                    {"type": "string", "name": "b"}
+                ]
+            }
+        "#;
+        let schema_string = format!(
+            "[\"null\", {}, {}]",
+            some_schema_string,
+            other_schema_string,
+        );
+        let schema = Schema::parse_str(&schema_string).unwrap();
+        let some_schema = Schema::parse_str(some_schema_string).unwrap();
+        let other_schema = Schema::parse_str(other_schema_string).unwrap();
+
+        let mut encoded: &'static [u8] = &[0];
+        assert_eq!(
+            from_avro_datum(&schema, &mut encoded, None).unwrap(),
+            Value::Union(UnionRef::primitive(SchemaKind::Null), Box::new(Value::Null))
+        );
+
+        let mut encoded: &'static [u8] = &[2, 54];
+        let mut record = Record::new(&some_schema).unwrap();
+        record.put("a", 27i64);
+        let expected = Value::Union(
+            UnionRef::from_fullname("some_record".to_string()),
+            Box::new(record.avro())
+        );
+        assert_eq!(
+            from_avro_datum(&schema, &mut encoded, None).unwrap(),
+            expected
+        );
+
+        let mut encoded: &'static [u8] = &[4, 6, 102, 111, 111];
+        let mut record = Record::new(&other_schema).unwrap();
+        record.put("b", "foo");
+        let expected = Value::Union(
+            UnionRef::from_fullname("other_record".to_string()),
+            Box::new(record.avro())
+        );
+        assert_eq!(
+            from_avro_datum(&schema, &mut encoded, None).unwrap(),
+            expected
         );
     }
 
