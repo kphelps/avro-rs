@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json;
 
 use crate::encode::{encode, encode_ref, encode_to_vec};
-use crate::schema::Schema;
+use crate::schema::{FullSchema, Schema};
 use crate::ser::Serializer;
 use crate::types::{ToAvro, Value};
 use crate::Codec;
@@ -34,7 +34,7 @@ impl ValidationError {
 
 /// Main interface for writing Avro formatted values.
 pub struct Writer<'a, W> {
-    schema: &'a Schema,
+    schema: &'a FullSchema,
     serializer: Serializer,
     writer: W,
     buffer: Vec<u8>,
@@ -45,16 +45,16 @@ pub struct Writer<'a, W> {
 }
 
 impl<'a, W: Write> Writer<'a, W> {
-    /// Creates a `Writer` given a `Schema` and something implementing the `io::Write` trait to write
+    /// Creates a `Writer` given a `FullSchema` and something implementing the `io::Write` trait to write
     /// to.
     /// No compression `Codec` will be used.
-    pub fn new(schema: &'a Schema, writer: W) -> Writer<'a, W> {
+    pub fn new(schema: &'a FullSchema, writer: W) -> Writer<'a, W> {
         Self::with_codec(schema, writer, Codec::Null)
     }
 
-    /// Creates a `Writer` with a specific `Codec` given a `Schema` and something implementing the
+    /// Creates a `Writer` with a specific `Codec` given a `FullSchema` and something implementing the
     /// `io::Write` trait to write to.
-    pub fn with_codec(schema: &'a Schema, writer: W, codec: Codec) -> Writer<'a, W> {
+    pub fn with_codec(schema: &'a FullSchema, writer: W, codec: Codec) -> Writer<'a, W> {
         let mut marker = Vec::with_capacity(16);
         for _ in 0..16 {
             marker.push(random::<u8>());
@@ -72,8 +72,8 @@ impl<'a, W: Write> Writer<'a, W> {
         }
     }
 
-    /// Get a reference to the `Schema` associated to a `Writer`.
-    pub fn schema(&self) -> &'a Schema {
+    /// Get a reference to the `FullSchema` associated to a `Writer`.
+    pub fn schema(&self) -> &'a FullSchema {
         self.schema
     }
 
@@ -249,8 +249,8 @@ impl<'a, W: Write> Writer<'a, W> {
         let num_values = self.num_values;
         let stream_len = self.buffer.len();
 
-        let num_bytes = self.append_raw(&num_values.avro(), &Schema::Long)?
-            + self.append_raw(&stream_len.avro(), &Schema::Long)?
+        let num_bytes = self.append_raw(&num_values.avro(), &Schema::Long.as_full_schema())?
+            + self.append_raw(&stream_len.avro(), &Schema::Long.as_full_schema())?
             + self.writer.write(self.buffer.as_ref())?
             + self.append_marker()?;
 
@@ -276,7 +276,7 @@ impl<'a, W: Write> Writer<'a, W> {
     }
 
     /// Append a raw Avro Value to the payload avoiding to encode it again.
-    fn append_raw(&mut self, value: &Value, schema: &Schema) -> Result<usize, Error> {
+    fn append_raw(&mut self, value: &Value, schema: &FullSchema) -> Result<usize, Error> {
         self.append_bytes(encode_to_vec(&value, schema).as_ref())
     }
 
@@ -287,7 +287,7 @@ impl<'a, W: Write> Writer<'a, W> {
 
     /// Create an Avro header based on schema, codec and sync marker.
     fn header(&self) -> Result<Vec<u8>, Error> {
-        let schema_bytes = serde_json::to_string(self.schema)?.into_bytes();
+        let schema_bytes = serde_json::to_string(&self.schema.schema)?.into_bytes();
 
         let mut metadata = HashMap::with_capacity(2);
         metadata.insert("avro.schema", Value::Bytes(schema_bytes));
@@ -297,7 +297,7 @@ impl<'a, W: Write> Writer<'a, W> {
         header.extend_from_slice(AVRO_OBJECT_HEADER);
         encode(
             &metadata.avro(),
-            &Schema::Map(Box::new(Schema::Bytes)),
+            &Schema::Map(Box::new(Schema::Bytes)).as_full_schema(),
             &mut header,
         );
         header.extend_from_slice(&self.marker);
@@ -312,7 +312,7 @@ impl<'a, W: Write> Writer<'a, W> {
 /// This is an internal function which gets the bytes buffer where to write as parameter instead of
 /// creating a new one like `to_avro_datum`.
 fn write_avro_datum<T: ToAvro>(
-    schema: &Schema,
+    schema: &FullSchema,
     value: T,
     buffer: &mut Vec<u8>,
 ) -> Result<(), Error> {
@@ -324,7 +324,7 @@ fn write_avro_datum<T: ToAvro>(
     Ok(())
 }
 
-fn write_value_ref(schema: &Schema, value: &Value, buffer: &mut Vec<u8>) -> Result<(), Error> {
+fn write_value_ref(schema: &FullSchema, value: &Value, buffer: &mut Vec<u8>) -> Result<(), Error> {
     if !value.validate(schema) {
         return Err(ValidationError::new("value does not match schema").into())
     }
@@ -338,7 +338,7 @@ fn write_value_ref(schema: &Schema, value: &Value, buffer: &mut Vec<u8>) -> Resu
 /// **NOTE** This function has a quite small niche of usage and does NOT generate headers and sync
 /// markers; use [`Writer`](struct.Writer.html) to be fully Avro-compatible if you don't know what
 /// you are doing, instead.
-pub fn to_avro_datum<T: ToAvro>(schema: &Schema, value: T) -> Result<Vec<u8>, Error> {
+pub fn to_avro_datum<T: ToAvro>(schema: &FullSchema, value: T) -> Result<Vec<u8>, Error> {
     let mut buffer = Vec::new();
     write_avro_datum(schema, value, &mut buffer)?;
     Ok(buffer)
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn test_to_avro_datum() {
         let schema = Schema::parse_str(SCHEMA).unwrap();
-        let mut record = Record::new(&schema).unwrap();
+        let mut record = Record::new(&schema.schema).unwrap();
         record.put("a", 27i64);
         record.put("b", "foo");
 
@@ -400,7 +400,7 @@ mod tests {
         let schema = Schema::parse_str(SCHEMA).unwrap();
         let mut writer = Writer::new(&schema, Vec::new());
 
-        let mut record = Record::new(&schema).unwrap();
+        let mut record = Record::new(&schema.schema).unwrap();
         record.put("a", 27i64);
         record.put("b", "foo");
 
@@ -451,7 +451,7 @@ mod tests {
         let schema = Schema::parse_str(SCHEMA).unwrap();
         let mut writer = Writer::new(&schema, Vec::new());
 
-        let mut record = Record::new(&schema).unwrap();
+        let mut record = Record::new(&schema.schema).unwrap();
         record.put("a", 27i64);
         record.put("b", "foo");
         let record_copy = record.clone();
@@ -611,7 +611,7 @@ mod tests {
         let schema = Schema::parse_str(SCHEMA).unwrap();
         let mut writer = Writer::with_codec(&schema, Vec::new(), Codec::Deflate);
 
-        let mut record = Record::new(&schema).unwrap();
+        let mut record = Record::new(&schema.schema).unwrap();
         record.put("a", 27i64);
         record.put("b", "foo");
 

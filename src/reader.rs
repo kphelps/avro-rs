@@ -7,7 +7,7 @@ use serde_json::from_slice;
 
 use crate::decode::decode;
 use crate::schema::ParseSchemaError;
-use crate::schema::Schema;
+use crate::schema::{FullSchema, Schema};
 use crate::types::Value;
 use crate::util::{self, DecodeError};
 use crate::Codec;
@@ -23,7 +23,7 @@ struct Block<R> {
     message_count: usize,
     marker: [u8; 16],
     codec: Codec,
-    writer_schema: Schema,
+    writer_schema: FullSchema,
 }
 
 impl<R: Read> Block<R> {
@@ -31,7 +31,7 @@ impl<R: Read> Block<R> {
         let mut block = Block {
             reader,
             codec: Codec::Null,
-            writer_schema: Schema::Null,
+            writer_schema: Schema::Null.as_full_schema(),
             buf: vec![],
             buf_idx: 0,
             message_count: 0,
@@ -45,7 +45,7 @@ impl<R: Read> Block<R> {
     /// Try to read the header and to set the writer `Schema`, the `Codec` and the marker based on
     /// its content.
     fn read_header(&mut self) -> Result<(), Error> {
-        let meta_schema = Schema::Map(Box::new(Schema::Bytes));
+        let meta_schema = Schema::Map(Box::new(Schema::Bytes)).as_full_schema();
 
         let mut buf = [0u8; 4];
         self.reader.read_exact(&mut buf)?;
@@ -152,7 +152,7 @@ impl<R: Read> Block<R> {
         self.len() == 0
     }
 
-    fn read_next(&mut self, read_schema: Option<&Schema>) -> Result<Option<Value>, Error> {
+    fn read_next(&mut self, read_schema: Option<&FullSchema>) -> Result<Option<Value>, Error> {
         if self.is_empty() {
             self.read_block_next()?;
             if self.is_empty() {
@@ -186,7 +186,7 @@ impl<R: Read> Block<R> {
 /// ```
 pub struct Reader<'a, R> {
     block: Block<R>,
-    reader_schema: Option<&'a Schema>,
+    reader_schema: Option<&'a FullSchema>,
     errored: bool,
     should_resolve_schema: bool,
 }
@@ -211,7 +211,7 @@ impl<'a, R: Read> Reader<'a, R> {
     /// to read from.
     ///
     /// **NOTE** The avro header is going to be read automatically upon creation of the `Reader`.
-    pub fn with_schema(schema: &'a Schema, reader: R) -> Result<Reader<'a, R>, Error> {
+    pub fn with_schema(schema: &'a FullSchema, reader: R) -> Result<Reader<'a, R>, Error> {
         let block = Block::new(reader)?;
         let mut reader = Reader {
             block,
@@ -225,12 +225,12 @@ impl<'a, R: Read> Reader<'a, R> {
     }
 
     /// Get a reference to the writer `Schema`.
-    pub fn writer_schema(&self) -> &Schema {
+    pub fn writer_schema(&self) -> &FullSchema {
         &self.block.writer_schema
     }
 
     /// Get a reference to the optional reader `Schema`.
-    pub fn reader_schema(&self) -> Option<&Schema> {
+    pub fn reader_schema(&self) -> Option<&FullSchema> {
         self.reader_schema
     }
 
@@ -273,9 +273,9 @@ impl<'a, R: Read> Iterator for Reader<'a, R> {
 /// header and consecutive data blocks; use [`Reader`](struct.Reader.html) if you don't know what
 /// you are doing, instead.
 pub fn from_avro_datum<R: Read>(
-    writer_schema: &Schema,
+    writer_schema: &FullSchema,
     reader: &mut R,
-    reader_schema: Option<&Schema>,
+    reader_schema: Option<&FullSchema>,
 ) -> Result<Value, Error> {
     let value = decode(writer_schema, reader)?;
     match reader_schema {
@@ -327,7 +327,7 @@ mod tests {
         let schema = Schema::parse_str(SCHEMA).unwrap();
         let mut encoded: &'static [u8] = &[54, 6, 102, 111, 111];
 
-        let mut record = Record::new(&schema).unwrap();
+        let mut record = Record::new(&schema.schema).unwrap();
         record.put("a", 27i64);
         record.put("b", "foo");
         let expected = record.avro();
@@ -375,8 +375,8 @@ mod tests {
             other_schema_string,
         );
         let schema = Schema::parse_str(&schema_string).unwrap();
-        let some_schema = Schema::parse_str(some_schema_string).unwrap();
-        let other_schema = Schema::parse_str(other_schema_string).unwrap();
+        let some_schema = Schema::parse_str(some_schema_string).unwrap().schema;
+        let other_schema = Schema::parse_str(other_schema_string).unwrap().schema;
 
         let mut encoded: &'static [u8] = &[0];
         assert_eq!(
@@ -411,14 +411,15 @@ mod tests {
 
     #[test]
     fn test_reader_iterator() {
-        let schema = Schema::parse_str(SCHEMA).unwrap();
-        let reader = Reader::with_schema(&schema, ENCODED).unwrap();
+        let full_schema = Schema::parse_str(SCHEMA).unwrap();
+        let reader = Reader::with_schema(&full_schema, ENCODED).unwrap();
+        let schema = &full_schema.schema;
 
-        let mut record1 = Record::new(&schema).unwrap();
+        let mut record1 = Record::new(schema).unwrap();
         record1.put("a", 27i64);
         record1.put("b", "foo");
 
-        let mut record2 = Record::new(&schema).unwrap();
+        let mut record2 = Record::new(schema).unwrap();
         record2.put("a", 42i64);
         record2.put("b", "bar");
 

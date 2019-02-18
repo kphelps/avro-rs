@@ -1,6 +1,6 @@
 use std::mem::transmute;
 
-use crate::schema::Schema;
+use crate::schema::{FullSchema, Schema, SchemaTypes};
 use crate::types::Value;
 use crate::util::{zig_i32, zig_i64};
 
@@ -9,13 +9,13 @@ use crate::util::{zig_i32, zig_i64};
 /// **NOTE** This will not perform schema validation. The value is assumed to
 /// be valid with regards to the schema. Schema are needed only to guide the
 /// encoding for complex type values.
-pub fn encode(value: &Value, schema: &Schema, buffer: &mut Vec<u8>) {
+pub fn encode(value: &Value, schema: &FullSchema, buffer: &mut Vec<u8>) {
     encode_ref(&value, schema, buffer)
 }
 
 fn encode_bytes<B: AsRef<[u8]> + ?Sized>(s: &B, buffer: &mut Vec<u8>) {
     let bytes = s.as_ref();
-    encode(&Value::Long(bytes.len() as i64), &Schema::Long, buffer);
+    encode(&Value::Long(bytes.len() as i64), &Schema::Long.as_full_schema(), buffer);
     buffer.extend_from_slice(bytes);
 }
 
@@ -32,7 +32,20 @@ fn encode_int(i: i32, buffer: &mut Vec<u8>) {
 /// **NOTE** This will not perform schema validation. The value is assumed to
 /// be valid with regards to the schema. Schema are needed only to guide the
 /// encoding for complex type values.
-pub fn encode_ref(value: &Value, schema: &Schema, buffer: &mut Vec<u8>) {
+pub fn encode_ref(value: &Value, schema: &FullSchema, buffer: &mut Vec<u8>) {
+    encode_ref_with_context(value, &schema.schema, &schema.types, buffer)
+}
+
+pub fn encode_ref_with_context(
+    value: &Value,
+    schema: &Schema,
+    types: &SchemaTypes,
+    buffer: &mut Vec<u8>,
+) {
+    if let Schema::Reference(ref name) = schema {
+        let inner = types.get(&name.fullname(None)).expect("Invalid Reference validation occurred");
+        return encode_ref_with_context(value, inner, types, buffer);
+    }
     match value {
         Value::Null => (),
         Value::Boolean(b) => buffer.push(if *b { 1u8 } else { 0u8 }),
@@ -62,7 +75,7 @@ pub fn encode_ref(value: &Value, schema: &Schema, buffer: &mut Vec<u8>) {
                     .find_ref(union_ref)
                     .expect("Invalid Union validation occurred");
                 encode_long(idx as i64, buffer);
-                encode_ref(&*item, inner_schema, buffer);
+                encode_ref_with_context(&*item, inner_schema, types, buffer);
             }
         },
         Value::Array(items) => {
@@ -70,7 +83,7 @@ pub fn encode_ref(value: &Value, schema: &Schema, buffer: &mut Vec<u8>) {
                 if items.len() > 0 {
                     encode_long(items.len() as i64, buffer);
                     for item in items.iter() {
-                        encode_ref(item, inner, buffer);
+                        encode_ref_with_context(item, inner, types, buffer);
                     }
                 }
                 buffer.push(0u8);
@@ -82,27 +95,23 @@ pub fn encode_ref(value: &Value, schema: &Schema, buffer: &mut Vec<u8>) {
                     encode_long(items.len() as i64, buffer);
                     for (key, value) in items {
                         encode_bytes(key, buffer);
-                        encode_ref(value, inner, buffer);
+                        encode_ref_with_context(value, inner, types, buffer);
                     }
                 }
                 buffer.push(0u8);
             }
         },
         Value::Record(fields) => {
-            if let Schema::Record {
-                fields: ref schema_fields,
-                ..
-            } = *schema
-            {
+            if let Schema::Record(ref inner) = *schema {
                 for (i, &(_, ref value)) in fields.iter().enumerate() {
-                    encode_ref(value, &schema_fields[i].schema, buffer);
+                    encode_ref_with_context(value, &inner.fields[i].schema, types, buffer);
                 }
             }
         },
     }
 }
 
-pub fn encode_to_vec(value: &Value, schema: &Schema) -> Vec<u8> {
+pub fn encode_to_vec(value: &Value, schema: &FullSchema) -> Vec<u8> {
     let mut buffer = Vec::new();
     encode(&value, schema, &mut buffer);
     buffer
@@ -119,7 +128,7 @@ mod tests {
         let empty: Vec<Value> = Vec::new();
         encode(
             &Value::Array(empty),
-            &Schema::Array(Box::new(Schema::Int)),
+            &Schema::Array(Box::new(Schema::Int)).as_full_schema(),
             &mut buf,
         );
         assert_eq!(vec![0u8], buf);
@@ -131,7 +140,7 @@ mod tests {
         let empty: HashMap<String, Value> = HashMap::new();
         encode(
             &Value::Map(empty),
-            &Schema::Map(Box::new(Schema::Int)),
+            &Schema::Map(Box::new(Schema::Int)).as_full_schema(),
             &mut buf,
         );
         assert_eq!(vec![0u8], buf);

@@ -99,7 +99,7 @@ fn test_round_trip() {
 #[test]
 fn test_int_encoding() {
     for (number, expected) in BINARY_ENCODINGS.iter() {
-        let encoded = to_avro_datum(&Schema::Int, Value::Int(*number as i32)).unwrap();
+        let encoded = to_avro_datum(&Schema::Int.as_full_schema(), Value::Int(*number as i32)).unwrap();
         assert_eq!(&encoded, expected);
     }
 }
@@ -107,7 +107,7 @@ fn test_int_encoding() {
 #[test]
 fn test_long_encoding() {
     for (number, expected) in BINARY_ENCODINGS.iter() {
-        let encoded = to_avro_datum(&Schema::Long, Value::Long(*number)).unwrap();
+        let encoded = to_avro_datum(&Schema::Long.as_full_schema(), Value::Long(*number)).unwrap();
         assert_eq!(&encoded, expected);
     }
 }

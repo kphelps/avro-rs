@@ -5,7 +5,7 @@ use std::hash::BuildHasher;
 use failure::Error;
 use serde_json::Value as JsonValue;
 
-use crate::schema::{Name, RecordField, Schema, SchemaKind, UnionSchema, UnionRef};
+use crate::schema::{Name, RecordField, RecordSchemaRef, FullSchema, Schema, SchemaKind, SchemaTypes, UnionSchema, UnionRef};
 
 /// Describes errors happened while performing schema resolution on Avro data.
 #[derive(Fail, Debug)]
@@ -228,24 +228,30 @@ impl<'a> Record<'a> {
     /// If the `Schema` is not a `Schema::Record` variant, `None` will be returned.
     pub fn new(schema: &Schema) -> Option<Record> {
         match *schema {
-            Schema::Record {
-                fields: ref schema_fields,
-                lookup: ref schema_lookup,
-                ref name,
-                ..
-            } => {
-                let mut fields = Vec::with_capacity(schema_fields.len());
-                for schema_field in schema_fields.iter() {
+            Schema::Record(ref record) => {
+                let mut fields = Vec::with_capacity(record.fields.len());
+                for schema_field in record.fields.iter() {
                     fields.push((schema_field.name.clone(), Value::Null));
                 }
 
                 Some(Record {
                     fields,
-                    schema_lookup,
-                    name: name.clone(),
+                    schema_lookup: &record.lookup,
+                    name: record.name.clone(),
                 })
             },
             _ => None,
+        }
+    }
+
+    pub fn from_ref(schema: &'a RecordSchemaRef<'a>) -> Record<'a> {
+        let schema_fields = schema.fields();
+        let mut fields = Vec::with_capacity(schema_fields.len());
+        schema_fields.iter().for_each(|field| fields.push((field.name().to_string(), Value::Null)));
+        Record {
+            fields,
+            schema_lookup: &schema.lookup(),
+            name: schema.name().clone(),
         }
     }
 
@@ -315,7 +321,15 @@ impl Value {
     ///
     /// See the [Avro specification](https://avro.apache.org/docs/current/spec.html)
     /// for the full set of rules of schema validation.
-    pub fn validate(&self, schema: &Schema) -> bool {
+    pub fn validate(&self, schema: &FullSchema) -> bool {
+        self.validate_with_context(&schema.schema, &schema.types)
+    }
+
+    fn validate_with_context(&self, schema: &Schema, types: &SchemaTypes) -> bool {
+        if let Schema::Reference(ref name) = *schema {
+            let resolved = types.get(&name.fullname(None)).unwrap();
+            return self.validate_with_context(resolved, types);
+        }
         match (self, schema) {
             (&Value::Null, &Schema::Null) => true,
             (&Value::Boolean(_), &Schema::Boolean) => true,
@@ -335,21 +349,20 @@ impl Value {
             // (&Value::Union(None), &Schema::Union(_)) => true,
             (&Value::Union(ref union_ref, ref value), &Schema::Union(ref inner)) => {
                 inner.find_ref(union_ref)
-                    .map(|(_, value_schema)| value.validate(value_schema))
+                    .map(|(_, value_schema)| value.validate_with_context(value_schema, types))
                     .unwrap_or(false)
             },
             (&Value::Array(ref items), &Schema::Array(ref inner)) => {
-                items.iter().all(|item| item.validate(inner))
+                items.iter().all(|item| item.validate_with_context(inner, types))
             },
             (&Value::Map(ref items), &Schema::Map(ref inner)) => {
-                items.iter().all(|(_, value)| value.validate(inner))
+                items.iter().all(|(_, value)| value.validate_with_context(inner, types))
             },
-            (&Value::Record(ref record_fields), &Schema::Record { ref fields, .. }) => {
-                fields.len() == record_fields.len() && fields.iter().zip(record_fields.iter()).all(
-                    |(field, &(ref name, ref value))| {
-                        field.name == *name && value.validate(&field.schema)
-                    },
-                )
+            (&Value::Record(ref record_fields), &Schema::Record(ref record_schema)) => {
+                record_schema.fields.len() == record_fields.len()
+                    && record_schema.fields.iter().zip(record_fields.iter()).all(|(field, &(ref name, ref value))| {
+                        field.name == *name && value.validate_with_context(&field.schema, types)
+                    })
             },
             _ => false,
         }
@@ -361,7 +374,13 @@ impl Value {
     /// See [Schema Resolution](https://avro.apache.org/docs/current/spec.html#Schema+Resolution)
     /// in the Avro specification for the full set of rules of schema
     /// resolution.
-    pub fn resolve(mut self, schema: &Schema) -> Result<Self, Error> {
+    pub fn resolve(self, schema: &FullSchema) -> Result<Self, Error> {
+        self.resolve_with_context(&schema.schema, &schema.types)
+    }
+
+    pub fn resolve_with_context(mut self, schema: &Schema, types: &SchemaTypes)
+        -> Result<Self, Error>
+    {
         // Check if this schema is a union, and if the reader schema is not.
         if SchemaKind::from(&self) == SchemaKind::Union
             && SchemaKind::from(schema) != SchemaKind::Union
@@ -383,11 +402,12 @@ impl Value {
             Schema::Bytes => self.resolve_bytes(),
             Schema::String => self.resolve_string(),
             Schema::Fixed { size, .. } => self.resolve_fixed(size),
-            Schema::Union(ref inner) => self.resolve_union(inner),
+            Schema::Union(ref inner) => self.resolve_union(inner, types),
             Schema::Enum { ref symbols, .. } => self.resolve_enum(symbols),
-            Schema::Array(ref inner) => self.resolve_array(inner),
-            Schema::Map(ref inner) => self.resolve_map(inner),
-            Schema::Record { ref fields, .. } => self.resolve_record(fields),
+            Schema::Array(ref inner) => self.resolve_array(inner, types),
+            Schema::Map(ref inner) => self.resolve_map(inner, types),
+            Schema::Record(ref record) => self.resolve_record(&record.fields, types),
+            Schema::Reference(ref name) => self.resolve_reference(name, types),
         }
     }
 
@@ -519,7 +539,7 @@ impl Value {
         }
     }
 
-    fn resolve_union(self, schema: &UnionSchema) -> Result<Self, Error> {
+    fn resolve_union(self, schema: &UnionSchema, types: &SchemaTypes) -> Result<Self, Error> {
         let option: Option<(usize, &Schema)> = match self {
             // Both are unions case.
             Value::Union(ref union_ref, _) => schema.find_ref(union_ref),
@@ -533,15 +553,15 @@ impl Value {
             Value::Union(_, v) => *v,
             v => v,
         };
-        v.resolve(inner)
+        v.resolve_with_context(inner, types)
     }
 
-    fn resolve_array(self, schema: &Schema) -> Result<Self, Error> {
+    fn resolve_array(self, schema: &Schema, types: &SchemaTypes) -> Result<Self, Error> {
         match self {
             Value::Array(items) => Ok(Value::Array(
                 items
                     .into_iter()
-                    .map(|item| item.resolve(schema))
+                    .map(|item| item.resolve_with_context(schema, types))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
             other => Err(SchemaResolutionError::new(format!(
@@ -551,12 +571,12 @@ impl Value {
         }
     }
 
-    fn resolve_map(self, schema: &Schema) -> Result<Self, Error> {
+    fn resolve_map(self, schema: &Schema, types: &SchemaTypes) -> Result<Self, Error> {
         match self {
             Value::Map(items) => Ok(Value::Map(
                 items
                     .into_iter()
-                    .map(|(key, value)| value.resolve(schema).map(|value| (key, value)))
+                    .map(|(key, value)| value.resolve_with_context(schema, types).map(|value| (key, value)))
                     .collect::<Result<HashMap<_, _>, _>>()?,
             )),
             other => Err(SchemaResolutionError::new(format!(
@@ -566,7 +586,7 @@ impl Value {
         }
     }
 
-    fn resolve_record(self, fields: &[RecordField]) -> Result<Self, Error> {
+    fn resolve_record(self, fields: &[RecordField], types: &SchemaTypes) -> Result<Self, Error> {
         let mut items = match self {
             Value::Map(items) => Ok(items),
             Value::Record(fields) => Ok(fields.into_iter().collect::<HashMap<_, _>>()),
@@ -597,11 +617,20 @@ impl Value {
                     },
                 };
                 value
-                    .resolve(&field.schema)
+                    .resolve_with_context(&field.schema, types)
                     .map(|value| (field.name.clone(), value))
             }).collect::<Result<Vec<_>, _>>()?;
 
         Ok(Value::Record(new_fields))
+    }
+
+    fn resolve_reference(self, name: &Name, types: &SchemaTypes) -> Result<Self, Error> {
+        let schema = types.get(&name.fullname(None))
+            .ok_or_else(|| SchemaResolutionError::new(format!(
+                "missing reference {} in schema",
+                name.name
+            )))?;
+        self.resolve_with_context(schema, types)
     }
 }
 
@@ -656,7 +685,7 @@ mod tests {
         ];
 
         for (value, schema, valid) in value_schema_valid.into_iter() {
-            assert_eq!(valid, value.validate(&schema));
+            assert_eq!(valid, value.validate(&schema.as_full_schema()));
         }
     }
 
@@ -665,7 +694,7 @@ mod tests {
         let schema = Schema::Fixed {
             size: 4,
             name: Name::new("some_fixed"),
-        };
+        }.as_full_schema();
 
         assert!(Value::Fixed(4, vec![0, 0, 0, 0]).validate(&schema));
         assert!(!Value::Fixed(5, vec![0, 0, 0, 0, 0]).validate(&schema));
@@ -682,7 +711,7 @@ mod tests {
                 "diamonds".to_string(),
                 "clubs".to_string(),
             ],
-        };
+        }.as_full_schema();
 
         assert!(Value::Enum(0, "spades".to_string()).validate(&schema));
         assert!(Value::String("spades".to_string()).validate(&schema));
@@ -699,7 +728,7 @@ mod tests {
                 "clubs".to_string(),
                 "spades".to_string(),
             ],
-        };
+        }.as_full_schema();
 
         assert!(!Value::Enum(0, "spades".to_string()).validate(&other_schema));
     }
@@ -735,7 +764,7 @@ mod tests {
                 },
             ],
             lookup: HashMap::new(),
-        };
+        }.as_full_schema();
 
         assert!(
             Value::Record(vec![
@@ -828,7 +857,7 @@ mod tests {
             some_record,
             other_record,
         ]).unwrap();
-        let schema = Schema::Union(union_schema);
+        let schema = Schema::Union(union_schema).as_full_schema();
 
         let null_value = Box::new(Value::Null);
         let null_ref = UnionRef::primitive(SchemaKind::Null);

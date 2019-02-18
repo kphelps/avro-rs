@@ -123,7 +123,7 @@
 //! let mut writer = Writer::new(&schema, Vec::new());
 //!
 //! // the Record type models our Record schema
-//! let mut record = Record::new(writer.schema()).unwrap();
+//! let mut record = Record::new(&writer.schema().schema).unwrap();
 //! record.put("a", 27i64);
 //! record.put("b", "foo");
 //!
@@ -268,7 +268,7 @@
 //! # "#;
 //! # let schema = Schema::parse_str(raw_schema).unwrap();
 //! # let mut writer = Writer::new(&schema, Vec::new());
-//! # let mut record = Record::new(writer.schema()).unwrap();
+//! # let mut record = Record::new(&writer.schema().schema).unwrap();
 //! # record.put("a", 27i64);
 //! # record.put("b", "foo");
 //! # writer.append(record).unwrap();
@@ -299,7 +299,7 @@
 //! # "#;
 //! # let writer_schema = Schema::parse_str(writer_raw_schema).unwrap();
 //! # let mut writer = Writer::new(&writer_schema, Vec::new());
-//! # let mut record = Record::new(writer.schema()).unwrap();
+//! # let mut record = Record::new(&writer.schema().schema).unwrap();
 //! # record.put("a", 27i64);
 //! # record.put("b", "foo");
 //! # writer.append(record).unwrap();
@@ -361,7 +361,7 @@
 //! # let schema = Schema::parse_str(raw_schema).unwrap();
 //! # let schema = Schema::parse_str(raw_schema).unwrap();
 //! # let mut writer = Writer::new(&schema, Vec::new());
-//! # let mut record = Record::new(writer.schema()).unwrap();
+//! # let mut record = Record::new(&writer.schema().schema).unwrap();
 //! # record.put("a", 27i64);
 //! # record.put("b", "foo");
 //! # writer.append(record).unwrap();
@@ -466,7 +466,7 @@
 //!
 //!     let mut writer = Writer::with_codec(&schema, Vec::new(), Codec::Deflate);
 //!
-//!     let mut record = Record::new(writer.schema()).unwrap();
+//!     let mut record = Record::new(&writer.schema().schema).unwrap();
 //!     record.put("a", 27i64);
 //!     record.put("b", "foo");
 //!
@@ -529,7 +529,7 @@ pub mod types;
 pub use crate::codec::Codec;
 pub use crate::de::from_value;
 pub use crate::reader::{from_avro_datum, Reader};
-pub use crate::schema::{ParseSchemaError, Schema, UnionRef};
+pub use crate::schema::{FullSchema, ParseSchemaError, Schema, UnionRef};
 pub use crate::ser::to_value;
 pub use crate::types::SchemaResolutionError;
 pub use crate::util::{max_allocation_bytes, DecodeError};
@@ -577,7 +577,7 @@ mod tests {
         let writer_schema = Schema::parse_str(writer_raw_schema).unwrap();
         let reader_schema = Schema::parse_str(reader_raw_schema).unwrap();
         let mut writer = Writer::with_codec(&writer_schema, Vec::new(), Codec::Null);
-        let mut record = Record::new(writer.schema()).unwrap();
+        let mut record = Record::new(&writer.schema().schema).unwrap();
         record.put("a", 27i64);
         record.put("b", "foo");
         writer.append(record).unwrap();
@@ -619,7 +619,7 @@ mod tests {
         "#;
         let schema = Schema::parse_str(raw_schema).unwrap();
         let mut writer = Writer::with_codec(&schema, Vec::new(), Codec::Null);
-        let mut record = Record::new(writer.schema()).unwrap();
+        let mut record = Record::new(&writer.schema().schema).unwrap();
         record.put("a", 27i64);
         record.put("b", "foo");
         record.put("c", "clubs");
@@ -682,7 +682,7 @@ mod tests {
         let writer_schema = Schema::parse_str(writer_raw_schema).unwrap();
         let reader_schema = Schema::parse_str(reader_raw_schema).unwrap();
         let mut writer = Writer::with_codec(&writer_schema, Vec::new(), Codec::Null);
-        let mut record = Record::new(writer.schema()).unwrap();
+        let mut record = Record::new(&writer.schema().schema).unwrap();
         record.put("a", 27i64);
         record.put("b", "foo");
         record.put("c", "clubs");
@@ -718,7 +718,7 @@ mod tests {
         "#;
         let writer_schema = Schema::parse_str(writer_raw_schema).unwrap();
         let mut writer = Writer::with_codec(&writer_schema, Vec::new(), Codec::Null);
-        let mut record = Record::new(writer.schema()).unwrap();
+        let mut record = Record::new(&writer.schema().schema).unwrap();
         record.put("a", 27i64);
         record.put("b", "foo");
         record.put("c", "clubs");

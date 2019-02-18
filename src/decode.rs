@@ -4,7 +4,7 @@ use std::mem::transmute;
 
 use failure::Error;
 
-use crate::schema::{Schema, UnionRef};
+use crate::schema::{FullSchema, Schema, SchemaTypes, UnionRef};
 use crate::types::Value;
 use crate::util::{safe_len, zag_i32, zag_i64, DecodeError};
 
@@ -24,7 +24,13 @@ fn decode_len<R: Read>(reader: &mut R) -> Result<usize, Error> {
 }
 
 /// Decode a `Value` from avro format given its `Schema`.
-pub fn decode<R: Read>(schema: &Schema, reader: &mut R) -> Result<Value, Error> {
+pub fn decode<R: Read>(schema: &FullSchema, reader: &mut R) -> Result<Value, Error> {
+    decode_with_context(&schema.schema, &schema.types, reader)
+}
+
+pub fn decode_with_context<R: Read>(schema: &Schema, types: &SchemaTypes, reader: &mut R)
+    -> Result<Value, Error>
+{
     match *schema {
         Schema::Null => Ok(Value::Null),
         Schema::Boolean => {
@@ -87,8 +93,8 @@ pub fn decode<R: Read>(schema: &Schema, reader: &mut R) -> Result<Value, Error> 
                 }
 
                 items.reserve(len as usize);
-                for i in 0..len {
-                    items.push(decode(inner, reader)?);
+                for _ in 0..len {
+                    items.push(decode_with_context(inner, types, reader)?);
                 }
             }
 
@@ -107,8 +113,8 @@ pub fn decode<R: Read>(schema: &Schema, reader: &mut R) -> Result<Value, Error> 
 
                 items.reserve(len as usize);
                 for _ in 0..len {
-                    if let Value::String(key) = decode(&Schema::String, reader)? {
-                        let value = decode(inner, reader)?;
+                    if let Value::String(key) = decode_with_context(&Schema::String, types, reader)? {
+                        let value = decode_with_context(inner, types, reader)?;
                         items.insert(key, value);
                     } else {
                         return Err(DecodeError::new("map key is not a string").into())
@@ -124,17 +130,18 @@ pub fn decode<R: Read>(schema: &Schema, reader: &mut R) -> Result<Value, Error> 
             match variants.get(index as usize) {
                 Some(variant) => {
                     let union_ref = UnionRef::from_schema(variant);
-                    decode(variant, reader).map(|x| Value::Union(union_ref, Box::new(x)))
+                    decode_with_context(variant, types, reader)
+                        .map(|x| Value::Union(union_ref, Box::new(x)))
                 }
                 None => Err(DecodeError::new("Union index out of bounds").into()),
             }
         },
-        Schema::Record { ref fields, .. } => {
+        Schema::Record(ref record) => {
             // Benchmarks indicate ~10% improvement using this method.
             let mut items = Vec::new();
-            for field in fields {
+            for field in &record.fields {
                 // This clone is also expensive. See if we can do away with it...
-                let x = (field.name.clone(), decode(&field.schema, reader)?);
+                let x = (field.name.clone(), decode_with_context(&field.schema, types, reader)?);
                 items.push(x);
             }
             Ok(Value::Record(items))
@@ -155,6 +162,11 @@ pub fn decode<R: Read>(schema: &Schema, reader: &mut R) -> Result<Value, Error> 
             } else {
                 Err(DecodeError::new("enum symbol not found").into())
             }
+        },
+        Schema::Reference(ref name) => {
+            types.get(&name.fullname(None))
+                .ok_or_else(|| DecodeError::new("reference name not found").into())
+                .and_then(|inner| decode_with_context(inner, types, reader))
         },
     }
 }

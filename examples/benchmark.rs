@@ -3,7 +3,7 @@ extern crate avro_rs;
 use std::time::Duration;
 use std::time::Instant;
 
-use avro_rs::schema::Schema;
+use avro_rs::schema::{FullSchema, Schema};
 use avro_rs::types::{Record, ToAvro, Value};
 use avro_rs::Reader;
 use avro_rs::Writer;
@@ -22,7 +22,7 @@ fn duration(nanos: u64) -> Duration {
 }
 */
 
-fn benchmark(schema: &Schema, record: &Value, s: &str, count: usize, runs: usize) {
+fn benchmark(schema: &FullSchema, record: &Value, s: &str, count: usize, runs: usize) {
     let mut records = Vec::new();
     for __ in 0..count {
         records.push(record.clone());
@@ -90,20 +90,20 @@ fn main() {
     println!("{:?}", small_schema);
     println!("{:?}", big_schema);
 
-    let mut small_record = Record::new(&small_schema).unwrap();
+    let mut small_record = Record::new(&small_schema.schema).unwrap();
     small_record.put("field", "foo");
     let small_record = small_record.avro();
 
     let raw_address_schema = r#"{"fields": [{"default": "NONE", "type": "string", "name": "street"}, {"default": "NONE", "type": "string", "name": "city"}, {"default": "NONE", "type": "string", "name": "state_prov"}, {"default": "NONE", "type": "string", "name": "country"}, {"default": "NONE", "type": "string", "name": "zip"}], "type": "record", "name": "mailing_address"}"#;
     let address_schema = Schema::parse_str(raw_address_schema).unwrap();
-    let mut address = Record::new(&address_schema).unwrap();
+    let mut address = Record::new(&address_schema.schema).unwrap();
     address.put("street", "street");
     address.put("city", "city");
     address.put("state_prov", "state_prov");
     address.put("country", "country");
     address.put("zip", "zip");
 
-    let mut big_record = Record::new(&big_schema).unwrap();
+    let mut big_record = Record::new(&big_schema.schema).unwrap();
     big_record.put("username", "username");
     big_record.put("age", 10i32);
     big_record.put("phone", "000000000");
