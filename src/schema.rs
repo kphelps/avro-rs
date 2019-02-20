@@ -105,6 +105,16 @@ pub trait SchemaIter<'a> {
         }
     }
 
+    fn enum_symbols(&self) -> &'a [String] {
+        let resolved = self.resolve_reference();
+        if let Schema::Enum { ref symbols, .. } = resolved {
+            symbols
+        } else {
+            unimplemented!();
+        }
+    }
+
+
     fn array_schema(&self) -> SchemaRef<'a> {
         let resolved = self.resolve_reference();
         if let Schema::Array(inner) = resolved {
