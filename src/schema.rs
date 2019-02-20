@@ -230,6 +230,14 @@ impl<'a> UnionSchemaRef<'a> {
             .map(|schema| SchemaRef { schema, types: self.types })
             .collect()
     }
+
+    pub fn union_ref_map(&self) -> HashMap<UnionRef, usize> {
+        let mut map = HashMap::new();
+        self.union.variants().iter().enumerate().for_each(|(i, schema)| {
+            map.insert(UnionRef::from_schema(schema), i);
+        });
+        map
+    }
 }
 
 /// Represents any valid Avro schema
