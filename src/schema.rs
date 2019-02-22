@@ -96,64 +96,64 @@ pub trait SchemaIter<'a> {
         }
     }
 
-    fn fixed_size(&self) -> usize {
+    fn fixed_size(&self) -> Option<usize> {
         let resolved = self.resolve_reference();
         if let Schema::Fixed{ size, .. } = resolved {
-            *size
+            Some(*size)
         } else {
-            unimplemented!();
+            None
         }
     }
 
-    fn enum_symbols(&self) -> &'a [String] {
+    fn enum_symbols(&self) -> Option<&'a [String]> {
         let resolved = self.resolve_reference();
         if let Schema::Enum { ref symbols, .. } = resolved {
-            symbols
+            Some(symbols)
         } else {
-            unimplemented!();
+            None
         }
     }
 
 
-    fn array_schema(&self) -> SchemaRef<'a> {
+    fn array_schema(&self) -> Option<SchemaRef<'a>> {
         let resolved = self.resolve_reference();
         if let Schema::Array(inner) = resolved {
-            self.build_iter(inner)
+            Some(self.build_iter(inner))
         } else {
-            unimplemented!();
+            None
         }
     }
 
-    fn map_schema(&self) -> SchemaRef<'a> {
+    fn map_schema(&self) -> Option<SchemaRef<'a>> {
         let resolved = self.resolve_reference();
         if let Schema::Map(inner) = resolved {
-            self.build_iter(inner)
+            Some(self.build_iter(inner))
         } else {
-            unimplemented!();
+            None
         }
     }
 
-    fn union_schema(&self) -> UnionSchemaRef<'a> {
+    fn union_schema(&self) -> Option<UnionSchemaRef<'a>> {
         let resolved = self.resolve_reference();
         if let Schema::Union(inner) = resolved {
-            UnionSchemaRef {
+            Some(UnionSchemaRef {
                 union: inner,
                 types: &self.types(),
-            }
+            })
         } else {
-            unimplemented!();
+            None
         }
     }
 
-    fn record_schema(&self) -> RecordSchemaRef<'a> {
+    fn record_schema(&self) -> Option<RecordSchemaRef<'a>> {
         let resolved = self.resolve_reference();
         if let Schema::Record(inner) = resolved {
-            RecordSchemaRef {
+            Some(RecordSchemaRef {
                 schema: inner,
                 types: &self.types(),
-            }
+            })
         } else {
-            unimplemented!();
+            None
         }
     }
 }
