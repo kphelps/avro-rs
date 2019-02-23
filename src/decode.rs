@@ -42,19 +42,24 @@ pub fn decode_with_context<R: Read>(schema: &Schema, types: &SchemaTypes, reader
                 1u8 => Ok(Value::Boolean(true)),
                 _ => Err(DecodeError::new("not a bool").into()),
             }
-        },
+        }
         Schema::Int => decode_int(reader),
+        Schema::Date => zag_i32(reader).map(Value::Date),
+        Schema::TimeMillis => zag_i32(reader).map(Value::TimeMillis),
         Schema::Long => decode_long(reader),
+        Schema::TimeMicros => zag_i64(reader).map(Value::TimeMicros),
+        Schema::TimestampMillis => zag_i64(reader).map(Value::TimestampMillis),
+        Schema::TimestampMicros => zag_i64(reader).map(Value::TimestampMicros),
         Schema::Float => {
             let mut buf = [0u8; 4];
             reader.read_exact(&mut buf[..])?;
             Ok(Value::Float(unsafe { transmute::<[u8; 4], f32>(buf) }))
-        },
+        }
         Schema::Double => {
             let mut buf = [0u8; 8];
             reader.read_exact(&mut buf[..])?;
             Ok(Value::Double(unsafe { transmute::<[u8; 8], f64>(buf) }))
-        },
+        }
         Schema::Bytes => {
             let len = decode_len(reader)?;
             let mut buf = Vec::with_capacity(len);
@@ -63,7 +68,7 @@ pub fn decode_with_context<R: Read>(schema: &Schema, types: &SchemaTypes, reader
             }
             reader.read_exact(&mut buf)?;
             Ok(Value::Bytes(buf))
-        },
+        }
         Schema::String => {
             let len = decode_len(reader)?;
             let mut buf = Vec::with_capacity(len);
@@ -75,12 +80,12 @@ pub fn decode_with_context<R: Read>(schema: &Schema, types: &SchemaTypes, reader
             String::from_utf8(buf)
                 .map(Value::String)
                 .map_err(|_| DecodeError::new("not a valid utf-8 string").into())
-        },
+        }
         Schema::Fixed { size, .. } => {
             let mut buf = vec![0u8; size as usize];
             reader.read_exact(&mut buf)?;
             Ok(Value::Fixed(size, buf))
-        },
+        }
         Schema::Array(ref inner) => {
             let mut items = Vec::new();
 
@@ -89,7 +94,7 @@ pub fn decode_with_context<R: Read>(schema: &Schema, types: &SchemaTypes, reader
                 // arrays are 0-terminated, 0i64 is also encoded as 0 in Avro
                 // reading a length of 0 means the end of the array
                 if len == 0 {
-                    break
+                    break;
                 }
 
                 items.reserve(len as usize);
@@ -99,7 +104,7 @@ pub fn decode_with_context<R: Read>(schema: &Schema, types: &SchemaTypes, reader
             }
 
             Ok(Value::Array(items))
-        },
+        }
         Schema::Map(ref inner) => {
             let mut items = HashMap::new();
 
@@ -108,7 +113,7 @@ pub fn decode_with_context<R: Read>(schema: &Schema, types: &SchemaTypes, reader
                 // maps are 0-terminated, 0i64 is also encoded as 0 in Avro
                 // reading a length of 0 means the end of the map
                 if len == 0 {
-                    break
+                    break;
                 }
 
                 items.reserve(len as usize);
@@ -117,13 +122,13 @@ pub fn decode_with_context<R: Read>(schema: &Schema, types: &SchemaTypes, reader
                         let value = decode_with_context(inner, types, reader)?;
                         items.insert(key, value);
                     } else {
-                        return Err(DecodeError::new("map key is not a string").into())
+                        return Err(DecodeError::new("map key is not a string").into());
                     }
                 }
             }
 
             Ok(Value::Map(items))
-        },
+        }
         Schema::Union(ref inner) => {
             let index = zag_i64(reader)?;
             let variants = inner.variants();
@@ -150,7 +155,7 @@ pub fn decode_with_context<R: Read>(schema: &Schema, types: &SchemaTypes, reader
             // .map(|field| decode(&field.schema, reader).map(|value| (field.name.clone(), value)))
             // .collect::<Result<Vec<(String, Value)>, _>>()
             // .map(|items| Value::Record(items))
-        },
+        }
         Schema::Enum { ref symbols, .. } => {
             if let Value::Int(index) = decode_int(reader)? {
                 if index >= 0 && (index as usize) <= symbols.len() {

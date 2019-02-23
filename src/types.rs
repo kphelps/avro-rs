@@ -65,6 +65,13 @@ pub enum Value {
     ///
     /// See [Record](types.Record) for a more user-friendly support.
     Record(Vec<(String, Value)>),
+    /// Logical type, serialized and deserialized as i32 directly. Can only be deserialized
+    /// properly with a schema.
+    Date(i32),
+    TimeMillis(i32),
+    TimeMicros(i64),
+    TimestampMillis(i64),
+    TimestampMicros(i64),
 }
 
 /// Any structure implementing the [ToAvro](trait.ToAvro.html) trait will be usable
@@ -239,7 +246,7 @@ impl<'a> Record<'a> {
                     schema_lookup: &record.lookup,
                     name: record.name.clone(),
                 })
-            },
+            }
             _ => None,
         }
     }
@@ -291,7 +298,7 @@ impl ToAvro for JsonValue {
             JsonValue::String(s) => Value::String(s),
             JsonValue::Array(items) => {
                 Value::Array(items.into_iter().map(|item| item.avro()).collect::<_>())
-            },
+            }
             JsonValue::Object(items) => Value::Map(
                 items
                     .into_iter()
@@ -334,7 +341,17 @@ impl Value {
             (&Value::Null, &Schema::Null) => true,
             (&Value::Boolean(_), &Schema::Boolean) => true,
             (&Value::Int(_), &Schema::Int) => true,
+            (&Value::Int(_), &Schema::Date) => true,
+            (&Value::Int(_), &Schema::TimeMillis) => true,
             (&Value::Long(_), &Schema::Long) => true,
+            (&Value::Long(_), &Schema::TimeMicros) => true,
+            (&Value::Long(_), &Schema::TimestampMillis) => true,
+            (&Value::Long(_), &Schema::TimestampMicros) => true,
+            (&Value::TimestampMicros(_), &Schema::TimestampMicros) => true,
+            (&Value::TimestampMillis(_), &Schema::TimestampMillis) => true,
+            (&Value::TimeMicros(_), &Schema::TimeMicros) => true,
+            (&Value::TimeMillis(_), &Schema::TimeMillis) => true,
+            (&Value::Date(_), &Schema::Date) => true,
             (&Value::Float(_), &Schema::Float) => true,
             (&Value::Double(_), &Schema::Double) => true,
             (&Value::Bytes(_), &Schema::Bytes) => true,
@@ -392,6 +409,7 @@ impl Value {
             };
             self = v;
         }
+        // TODO (JAB): XXX
         match *schema {
             Schema::Null => self.resolve_null(),
             Schema::Boolean => self.resolve_boolean(),
@@ -408,6 +426,7 @@ impl Value {
             Schema::Map(ref inner) => self.resolve_map(inner, types),
             Schema::Record(ref record) => self.resolve_record(&record.fields, types),
             Schema::Reference(ref name) => self.resolve_reference(name, types),
+            _ => unimplemented!("TODO"),
         }
     }
 
@@ -416,7 +435,7 @@ impl Value {
             Value::Null => Ok(Value::Null),
             other => {
                 Err(SchemaResolutionError::new(format!("Null expected, got {:?}", other)).into())
-            },
+            }
         }
     }
 
@@ -425,7 +444,7 @@ impl Value {
             Value::Boolean(b) => Ok(Value::Boolean(b)),
             other => {
                 Err(SchemaResolutionError::new(format!("Boolean expected, got {:?}", other)).into())
-            },
+            }
         }
     }
 
@@ -435,7 +454,7 @@ impl Value {
             Value::Long(n) => Ok(Value::Int(n as i32)),
             other => {
                 Err(SchemaResolutionError::new(format!("Int expected, got {:?}", other)).into())
-            },
+            }
         }
     }
 
@@ -445,7 +464,7 @@ impl Value {
             Value::Long(n) => Ok(Value::Long(n)),
             other => {
                 Err(SchemaResolutionError::new(format!("Long expected, got {:?}", other)).into())
-            },
+            }
         }
     }
 
@@ -457,7 +476,7 @@ impl Value {
             Value::Double(x) => Ok(Value::Float(x as f32)),
             other => {
                 Err(SchemaResolutionError::new(format!("Float expected, got {:?}", other)).into())
-            },
+            }
         }
     }
 
@@ -469,7 +488,7 @@ impl Value {
             Value::Double(x) => Ok(Value::Double(x)),
             other => {
                 Err(SchemaResolutionError::new(format!("Double expected, got {:?}", other)).into())
-            },
+            }
         }
     }
 
@@ -479,7 +498,7 @@ impl Value {
             Value::String(s) => Ok(Value::Bytes(s.into_bytes())),
             other => {
                 Err(SchemaResolutionError::new(format!("Bytes expected, got {:?}", other)).into())
-            },
+            }
         }
     }
 
@@ -489,7 +508,7 @@ impl Value {
             Value::Bytes(bytes) => Ok(Value::String(String::from_utf8(bytes)?)),
             other => {
                 Err(SchemaResolutionError::new(format!("String expected, got {:?}", other)).into())
-            },
+            }
         }
     }
 
@@ -505,7 +524,7 @@ impl Value {
             },
             other => {
                 Err(SchemaResolutionError::new(format!("String expected, got {:?}", other)).into())
-            },
+            }
         }
     }
 
@@ -605,7 +624,7 @@ impl Value {
                         Some(ref value) => match field.schema {
                             Schema::Enum { ref symbols, .. } => {
                                 value.clone().avro().resolve_enum(symbols)?
-                            },
+                            }
                             _ => value.clone().avro(),
                         },
                         _ => {
@@ -613,7 +632,7 @@ impl Value {
                                 "missing field {} in record",
                                 field.name
                             )).into())
-                        },
+                        }
                     },
                 };
                 value

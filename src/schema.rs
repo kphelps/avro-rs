@@ -285,6 +285,21 @@ pub enum Schema {
     },
     /// A `fixed` Avro schema.
     Fixed { name: Name, size: usize },
+    // TODO (JAB): Implement eventually
+    // /// Logical type which represents `Decimal` values. The underlying type is serialized and
+    // /// deserialized as `Schema::Bytes` or `Schema::Fixed`. `scale` defaults to 0 and `precision`
+    // /// ...
+    // Decimal {
+    //     scale: usize,
+    //     precision: usize,
+    // },
+    /// Logical type which represents the number of days since the unix epoch.
+    /// Serialization format is `Schema::Int`.
+    Date,
+    TimeMillis,
+    TimeMicros,
+    TimestampMillis,
+    TimestampMicros,
     Reference(Name),
 }
 
@@ -336,6 +351,12 @@ pub enum SchemaKind {
     Record,
     Enum,
     Fixed,
+    // Decimal,
+    Date,
+    TimeMillis,
+    TimeMicros,
+    TimestampMillis,
+    TimestampMicros,
 }
 
 impl<'a> From<&'a Schema> for SchemaKind {
@@ -358,6 +379,11 @@ impl<'a> From<&'a Schema> for SchemaKind {
             Schema::Enum { .. } => SchemaKind::Enum,
             Schema::Fixed { .. } => SchemaKind::Fixed,
             Schema::Reference(_) => SchemaKind::Record,
+            Schema::Date => SchemaKind::Date,
+            Schema::TimeMillis => SchemaKind::TimeMillis,
+            Schema::TimeMicros => SchemaKind::TimeMicros,
+            Schema::TimestampMillis => SchemaKind::TimestampMillis,
+            Schema::TimestampMicros => SchemaKind::TimestampMicros,
         }
     }
 }
@@ -365,21 +391,27 @@ impl<'a> From<&'a Schema> for SchemaKind {
 impl<'a> From<&'a types::Value> for SchemaKind {
     #[inline(always)]
     fn from(value: &'a types::Value) -> SchemaKind {
+        use self::types::Value;
         match value {
-            types::Value::Null => SchemaKind::Null,
-            types::Value::Boolean(_) => SchemaKind::Boolean,
-            types::Value::Int(_) => SchemaKind::Int,
-            types::Value::Long(_) => SchemaKind::Long,
-            types::Value::Float(_) => SchemaKind::Float,
-            types::Value::Double(_) => SchemaKind::Double,
-            types::Value::Bytes(_) => SchemaKind::Bytes,
-            types::Value::String(_) => SchemaKind::String,
-            types::Value::Array(_) => SchemaKind::Array,
-            types::Value::Map(_) => SchemaKind::Map,
-            types::Value::Union(_, _) => SchemaKind::Union,
-            types::Value::Record(_) => SchemaKind::Record,
-            types::Value::Enum(_, _) => SchemaKind::Enum,
-            types::Value::Fixed(_, _) => SchemaKind::Fixed,
+            Value::Null => SchemaKind::Null,
+            Value::Boolean(_) => SchemaKind::Boolean,
+            Value::Int(_) => SchemaKind::Int,
+            Value::Long(_) => SchemaKind::Long,
+            Value::Float(_) => SchemaKind::Float,
+            Value::Double(_) => SchemaKind::Double,
+            Value::Bytes(_) => SchemaKind::Bytes,
+            Value::String(_) => SchemaKind::String,
+            Value::Array(_) => SchemaKind::Array,
+            Value::Map(_) => SchemaKind::Map,
+            Value::Union(_, _) => SchemaKind::Union,
+            Value::Record(_) => SchemaKind::Record,
+            Value::Enum(_, _) => SchemaKind::Enum,
+            Value::Fixed(_, _) => SchemaKind::Fixed,
+            Value::Date(_) => SchemaKind::Date,
+            Value::TimeMillis(_) => SchemaKind::TimeMillis,
+            Value::TimeMicros(_) => SchemaKind::TimeMicros,
+            Value::TimestampMillis(_) => SchemaKind::TimestampMillis,
+            Value::TimestampMicros(_) => SchemaKind::TimestampMicros,
         }
     }
 }
@@ -773,6 +805,51 @@ impl Schema {
     /// Avro supports "recursive" definition of types.
     /// e.g: {"type": {"type": "string"}}
     fn parse_complex(complex: &Map<String, Value>, context: &mut SchemaParseContext) -> Result<Self, Error> {
+        fn logical_verify_type(complex: &Map<String, Value>, t: &str) -> Result<(), Error> {
+            match complex.get("type") {
+                Some(&Value::String(ref a)) if a == t => Ok(()),
+                Some(&Value::String(ref a)) => Err(ParseSchemaError::new(format!(
+                    "Unexpected `type` ({}) variant for logicalType",
+                    a
+                )))?,
+                _ => Err(ParseSchemaError::new(
+                    "Unexpected type variant for logicalType",
+                ))?,
+            }
+        }
+        match complex.get("logicalType") {
+            Some(&Value::String(ref t)) => match t.as_str() {
+                "decimal" => unimplemented!("TODO - XXX `decimal` logicalType"),
+                "date" => {
+                    logical_verify_type(complex, "int")?;
+                    return Ok(Schema::Date);
+                }
+                "time-millis" => {
+                    logical_verify_type(complex, "int")?;
+                    return Ok(Schema::TimeMillis);
+                }
+                "time-micros" => {
+                    logical_verify_type(complex, "long")?;
+                    return Ok(Schema::TimeMicros);
+                }
+                "timestamp-millis" => {
+                    logical_verify_type(complex, "long")?;
+                    return Ok(Schema::TimestampMillis);
+                }
+                "timestamp-micros" => {
+                    logical_verify_type(complex, "long")?;
+                    return Ok(Schema::TimestampMicros);
+                }
+                // In this case, of an unknown logical type, we just pass through to the underlying
+                // type.
+                _ => {}
+            },
+            // The spec says to ignore invalid logical types and just continue through to the
+            // underlying type - It is unclear whether that applies to this case or not, where the
+            // `logicalType` is not a string.
+            Some(_) => Err(ParseSchemaError::new("logicalType must be a string"))?,
+            _ => {}
+        }
         match complex.get("type") {
             Some(&Value::String(ref t)) => match t.as_str() {
                 "array" => Schema::parse_array(complex, context),
@@ -940,13 +1017,13 @@ impl Serialize for Schema {
                 map.serialize_entry("type", "array")?;
                 map.serialize_entry("items", &*inner.clone())?;
                 map.end()
-            },
+            }
             Schema::Map(ref inner) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("type", "map")?;
                 map.serialize_entry("values", &*inner.clone())?;
                 map.end()
-            },
+            }
             Schema::Union(ref inner) => {
                 let variants = inner.variants();
                 let mut seq = serializer.serialize_seq(Some(variants.len()))?;
@@ -970,7 +1047,7 @@ impl Serialize for Schema {
                 }
                 map.serialize_entry("fields", &schema.fields)?;
                 map.end()
-            },
+            }
             Schema::Enum {
                 ref name,
                 ref symbols,
@@ -981,7 +1058,7 @@ impl Serialize for Schema {
                 map.serialize_entry("name", &name.name)?;
                 map.serialize_entry("symbols", symbols)?;
                 map.end()
-            },
+            }
             Schema::Fixed { ref name, ref size } => {
                 let mut map = serializer.serialize_map(None)?;
                 map.serialize_entry("type", "fixed")?;
@@ -990,6 +1067,36 @@ impl Serialize for Schema {
                 map.end()
             },
             Schema::Reference(ref name) => serializer.serialize_str(&name.name),
+            Schema::Date => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", "int")?;
+                map.serialize_entry("logicalType", "date")?;
+                map.end()
+            }
+            Schema::TimeMillis => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", "int")?;
+                map.serialize_entry("logicalType", "time-millis")?;
+                map.end()
+            }
+            Schema::TimeMicros => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", "long")?;
+                map.serialize_entry("logicalType", "time-micros")?;
+                map.end()
+            }
+            Schema::TimestampMillis => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", "long")?;
+                map.serialize_entry("logicalType", "timestamp-millis")?;
+                map.end()
+            }
+            Schema::TimestampMicros => {
+                let mut map = serializer.serialize_map(None)?;
+                map.serialize_entry("type", "long")?;
+                map.serialize_entry("logicalType", "timestamp-micros")?;
+                map.end()
+            }
         }
     }
 }
@@ -1031,13 +1138,13 @@ fn pcf_map(schema: &Map<String, serde_json::Value>) -> String {
         if schema.len() == 1 && k == "type" {
             // Invariant: function is only callable from a valid schema, so this is acceptable.
             if let serde_json::Value::String(s) = v {
-                return pcf_string(s)
+                return pcf_string(s);
             }
         }
 
         // Strip out unused fields ([STRIP] rule)
         if field_ordering_position(k).is_none() {
-            continue
+            continue;
         }
 
         // Fully qualify the name, if it isn't already ([FULLNAMES] rule).
@@ -1047,12 +1154,12 @@ fn pcf_map(schema: &Map<String, serde_json::Value>) -> String {
             let n = match ns {
                 Some(namespace) if !name.contains('.') => {
                     Cow::Owned(format!("{}.{}", namespace, name))
-                },
+                }
                 _ => Cow::Borrowed(name),
             };
 
             fields.push((k, format!("{}:{}", pcf_string(k), pcf_string(&*n))));
-            continue
+            continue;
         }
 
         // Strip off quotes surrounding "size" type, if they exist ([INTEGERS] rule).
@@ -1062,7 +1169,7 @@ fn pcf_map(schema: &Map<String, serde_json::Value>) -> String {
                 None => v.as_i64().unwrap(),
             };
             fields.push((k, format!("{}:{}", pcf_string(k), i)));
-            continue
+            continue;
         }
 
         // For anything else, recursively process the result.
@@ -1492,4 +1599,8 @@ mod tests {
         );
     }
 
+    fn test_logical_types() {
+        let schema = Schema::parse_str(r#"{"type": "int", "logicalType": "date"}"#).unwrap();
+        assert_eq!(schema, Schema::Date);
+    }
 }
