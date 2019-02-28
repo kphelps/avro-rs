@@ -226,6 +226,10 @@ impl<'a> RecordFieldRef<'a> {
             types: self.types,
         }
     }
+
+    pub fn default(&self) -> Option<&Value> {
+        self.field.default.as_ref()
+    }
 }
 
 pub struct UnionSchemaRef<'a> {

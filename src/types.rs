@@ -381,7 +381,10 @@ impl Value {
                         field.name == *name && value.validate_with_context(&field.schema, types)
                     })
             },
-            _ => false,
+            _ => {
+                println!("{:?} != {:?}", self, schema);
+                false
+            },
         }
     }
 
@@ -419,6 +422,9 @@ impl Value {
             Schema::Double => self.resolve_double(),
             Schema::Bytes => self.resolve_bytes(),
             Schema::String => self.resolve_string(),
+            Schema::Date => self.resolve_date(),
+            Schema::TimestampMillis => self.resolve_timestamp_millis(),
+            Schema::TimestampMicros => self.resolve_timestamp_micros(),
             Schema::Fixed { size, .. } => self.resolve_fixed(size),
             Schema::Union(ref inner) => self.resolve_union(inner, types),
             Schema::Enum { ref symbols, .. } => self.resolve_enum(symbols),
@@ -464,6 +470,33 @@ impl Value {
             Value::Long(n) => Ok(Value::Long(n)),
             other => {
                 Err(SchemaResolutionError::new(format!("Long expected, got {:?}", other)).into())
+            }
+        }
+    }
+
+    fn resolve_date(self) -> Result<Self, Error> {
+        match self {
+            Value::Date(n) => Ok(Value::Date(n)),
+            other => {
+                Err(SchemaResolutionError::new(format!("Date expected, got {:?}", other)).into())
+            }
+        }
+    }
+
+    fn resolve_timestamp_millis(self) -> Result<Self, Error> {
+        match self {
+            Value::TimestampMillis(n) => Ok(Value::TimestampMillis(n)),
+            other => {
+                Err(SchemaResolutionError::new(format!("Timestamp-millis expected, got {:?}", other)).into())
+            }
+        }
+    }
+
+    fn resolve_timestamp_micros(self) -> Result<Self, Error> {
+        match self {
+            Value::TimestampMicros(n) => Ok(Value::TimestampMicros(n)),
+            other => {
+                Err(SchemaResolutionError::new(format!("Timestamp-micros expected, got {:?}", other)).into())
             }
         }
     }
