@@ -1,6 +1,6 @@
 //! Logic for parsing and interacting with schemas in Avro format.
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use digest::Digest;
@@ -60,7 +60,7 @@ pub trait SchemaIter<'a> {
 
     fn as_full_schema(&self) -> FullSchema {
         FullSchema {
-            schema: self.schema().clone(),
+            schema: self.schema().expand(self.types()),
             types: self.types().clone(),
         }
     }
@@ -430,6 +430,32 @@ impl<'a> From<&'a types::Value> for SchemaKind {
     }
 }
 
+impl SchemaKind {
+    pub fn type_name(&self) -> &'static str{
+        match *self {
+            SchemaKind::Null => "null",
+            SchemaKind::Boolean => "boolean",
+            SchemaKind::Int => "int",
+            SchemaKind::Long => "long",
+            SchemaKind::Float => "float",
+            SchemaKind::Double => "double",
+            SchemaKind::Bytes => "bytes",
+            SchemaKind::String => "string",
+            SchemaKind::Array => "array",
+            SchemaKind::Map => "map",
+            SchemaKind::Union => "union",
+            SchemaKind::Record => "record",
+            SchemaKind::Enum => "enum",
+            SchemaKind::Fixed => "fixed",
+            SchemaKind::Date => "date",
+            SchemaKind::TimeMillis => "time-millis",
+            SchemaKind::TimeMicros => "time-micros",
+            SchemaKind::TimestampMillis => "timestamp-millis",
+            SchemaKind::TimestampMicros => "timestamp-micros",
+        }
+    }
+}
+
 /// Represents names for `record`, `enum` and `fixed` Avro schemas.
 ///
 /// Each of these `Schema`s have a `fullname` composed of two parts:
@@ -758,7 +784,7 @@ impl Schema {
         }
     }
 
-    pub fn as_full_schema(self) -> FullSchema {
+    pub(crate) fn as_full_schema(self) -> FullSchema {
         FullSchema {
             schema: self,
             types: SchemaTypes::new(),
@@ -1001,6 +1027,54 @@ impl Schema {
         })
     }
 
+    fn expand(&self, types: &SchemaTypes) -> Schema {
+        let mut seen = HashSet::new();
+        self.expand_impl(types, &mut seen)
+    }
+
+    fn expand_impl(&self, types: &SchemaTypes, seen: &mut HashSet<String>) -> Schema {
+        let name = self.name().map(|name| name.fullname(None));
+        if let Some(name) = name {
+            let already_seen = seen.contains(&name);
+            seen.insert(name.clone());
+
+            match *self {
+                Schema::Reference(_) if !already_seen => {
+                    let out = types.get(&name).unwrap();
+                    out.expand_impl(types, seen)
+                },
+                Schema::Record(ref schema) => {
+                    let fields = schema.fields.iter().map(|field| {
+                        let field_schema = field.schema.expand_impl(types, seen);
+                        let mut new_field = field.clone();
+                        new_field.schema = field_schema;
+                        new_field
+                    });
+                    let mut new_schema = schema.clone();
+                    new_schema.fields = fields.collect();
+                    Schema::Record(new_schema)
+                },
+                ref otherwise => otherwise.clone(),
+            }
+        } else {
+            match *self {
+                Schema::Union(ref schema) => {
+                    let variants = schema.variants().iter().map(|variant| {
+                        variant.expand_impl(types, seen)
+                    });
+                    Schema::Union(UnionSchema::new(variants.collect()).unwrap())
+                },
+                Schema::Array(ref schema) => {
+                    Schema::Array(Box::new(schema.expand_impl(types, seen)))
+                },
+                Schema::Map(ref schema) => {
+                    Schema::Map(Box::new(schema.expand_impl(types, seen)))
+                },
+                ref otherwise => otherwise.clone(),
+            }
+        }
+    }
+
     fn name(&self) -> Option<&Name> {
         match *self {
             Schema::Record(ref schema) => Some(&schema.name),
@@ -1078,6 +1152,9 @@ impl Serialize for Schema {
                 map.serialize_entry("type", "fixed")?;
                 map.serialize_entry("name", &name.name)?;
                 map.serialize_entry("size", size)?;
+                if let Some(ref n) = name.namespace {
+                    map.serialize_entry("namespace", n)?;
+                }
                 map.end()
             },
             Schema::Reference(ref name) => serializer.serialize_str(&name.name),
