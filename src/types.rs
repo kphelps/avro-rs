@@ -312,6 +312,32 @@ impl ToAvro for JsonValue {
 }
 
 impl Value {
+    pub fn null() -> Value { Value::Null }
+    pub fn boolean(value: bool) -> Value { Value::Boolean(value) }
+    pub fn int(value: i32) -> Value { Value::Int(value) }
+    pub fn long(value: i64) -> Value { Value::Long(value) }
+    pub fn float(value: f32) -> Value { Value::Float(value) }
+    pub fn double(value: f64) -> Value { Value::Double(value) }
+    pub fn bytes(value: Vec<u8>) -> Value { Value::Bytes(value) }
+    pub fn string(value: &str) -> Value { Value::String(value.into()) }
+    pub fn fixed(size: usize, bytes: Vec<u8>) -> Value { Value::Fixed(size, bytes) }
+    pub fn r#enum(idx: i32, name: &str) -> Value { Value::Enum(idx, name.into()) }
+    pub fn array(values: Vec<Value>) -> Value { Value::Array(values) }
+    pub fn map(values: HashMap<String, Value>) -> Value { Value::Map(values) }
+    pub fn record(fields: Vec<(String, Value)>) -> Value { Value::Record(fields) }
+
+     pub fn union(value: Value) -> Value {
+        Value::Union(
+            UnionRef::from_value(&value),
+            Box::new(value)) 
+    }
+
+     pub fn union_named(name: &Name, value: Value) -> Value {
+        Value::Union(
+            UnionRef::named(name),
+            Box::new(value))
+    }
+
     /// Validate the value against the given [Schema](../schema/enum.Schema.html).
     ///
     /// See the [Avro specification](https://avro.apache.org/docs/current/spec.html)
