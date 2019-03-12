@@ -1,6 +1,7 @@
 //! Logic handling the intermediate representation of Avro values.
 use std::collections::HashMap;
 use std::hash::BuildHasher;
+use std::u8;
 
 use failure::Error;
 use serde_json::Value as JsonValue;
@@ -456,6 +457,12 @@ impl Value {
         match self {
             Value::Bytes(bytes) => Ok(Value::Bytes(bytes)),
             Value::String(s) => Ok(Value::Bytes(s.into_bytes())),
+            Value::Array(items) => Ok(Value::Bytes(
+                items
+                    .into_iter()
+                    .map(Value::try_u8)
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
             other => {
                 Err(SchemaResolutionError::new(format!("Bytes expected, got {:?}", other)).into())
             },
@@ -501,7 +508,7 @@ impl Value {
         };
 
         match self {
-            Value::Enum(i, s) => if i > 0 && i < symbols.len() as i32 {
+            Value::Enum(i, s) => if i >= 0 && i < symbols.len() as i32 {
                 validate_symbol(s, symbols)
             } else {
                 Err(SchemaResolutionError::new(format!(
@@ -601,6 +608,21 @@ impl Value {
             }).collect::<Result<Vec<_>, _>>()?;
 
         Ok(Value::Record(new_fields))
+    }
+
+    fn try_u8(self) -> Result<u8, Error> {
+        let int = self.resolve(&Schema::Int)?;
+        if let Value::Int(n) = int {
+            if n >= 0 && n <= i32::from(u8::MAX) {
+                return Ok(n as u8)
+            }
+        }
+
+        Err(
+            SchemaResolutionError::new(
+                format!("Unable to convert to u8, got {:?}", int)
+            ).into()
+        )
     }
 }
 
@@ -850,5 +872,18 @@ mod tests {
         assert!(!validate(&missing_ref, &some_value));
         assert!(!validate(&missing_ref, &other_value));
         assert!(!validate(&null_ref, &some_value));
+    }
+    fn resolve_bytes_ok() {
+        let value = Value::Array(vec![Value::Int(0), Value::Int(42)]);
+        assert_eq!(
+            value.resolve(&Schema::Bytes).unwrap(),
+            Value::Bytes(vec![0u8, 42u8])
+        );
+    }
+
+    #[test]
+    fn resolve_bytes_failure() {
+        let value = Value::Array(vec![Value::Int(2000), Value::Int(-42)]);
+        assert!(value.resolve(&Schema::Bytes).is_err());
     }
 }
