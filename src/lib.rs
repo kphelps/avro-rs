@@ -520,7 +520,7 @@ mod decode;
 mod encode;
 mod reader;
 mod ser;
-mod util;
+pub mod util;
 mod writer;
 
 pub mod schema;
